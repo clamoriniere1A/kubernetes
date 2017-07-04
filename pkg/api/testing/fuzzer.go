@@ -586,8 +586,14 @@ func batchFuncs(t apitesting.TestingCommon) []interface{} {
 			c.FuzzNoCustom(j) // fuzz self without calling this function again
 			completions := int32(c.Rand.Int31())
 			parallelism := int32(c.Rand.Int31())
+			backoffLimit := int32(c.Rand.Int31())
+			backoffDeadlineSeconds := int64(c.Rand.Int63())
+			failedPodsLimit := int32(c.Rand.Int31())
 			j.Completions = &completions
 			j.Parallelism = &parallelism
+			j.BackoffLimit = &backoffLimit
+			j.BackoffDeadlineSeconds = &backoffDeadlineSeconds
+			j.FailedPodsLimit = &failedPodsLimit
 			if c.Rand.Int31()%2 == 0 {
 				j.ManualSelector = newBool(true)
 			} else {
