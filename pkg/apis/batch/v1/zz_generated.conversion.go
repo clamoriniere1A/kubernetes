@@ -161,6 +161,9 @@ func autoConvert_v1_JobSpec_To_batch_JobSpec(in *v1.JobSpec, out *batch.JobSpec,
 	out.Parallelism = (*int32)(unsafe.Pointer(in.Parallelism))
 	out.Completions = (*int32)(unsafe.Pointer(in.Completions))
 	out.ActiveDeadlineSeconds = (*int64)(unsafe.Pointer(in.ActiveDeadlineSeconds))
+	out.BackoffLimit = (*int32)(unsafe.Pointer(in.BackoffLimit))
+	out.BackoffDeadlineSeconds = (*int64)(unsafe.Pointer(in.BackoffDeadlineSeconds))
+	out.FailedPodsLimit = (*int32)(unsafe.Pointer(in.FailedPodsLimit))
 	out.Selector = (*meta_v1.LabelSelector)(unsafe.Pointer(in.Selector))
 	out.ManualSelector = (*bool)(unsafe.Pointer(in.ManualSelector))
 	if err := api_v1.Convert_v1_PodTemplateSpec_To_api_PodTemplateSpec(&in.Template, &out.Template, s); err != nil {
@@ -173,6 +176,9 @@ func autoConvert_batch_JobSpec_To_v1_JobSpec(in *batch.JobSpec, out *v1.JobSpec,
 	out.Parallelism = (*int32)(unsafe.Pointer(in.Parallelism))
 	out.Completions = (*int32)(unsafe.Pointer(in.Completions))
 	out.ActiveDeadlineSeconds = (*int64)(unsafe.Pointer(in.ActiveDeadlineSeconds))
+	out.BackoffLimit = (*int32)(unsafe.Pointer(in.BackoffLimit))
+	out.BackoffDeadlineSeconds = (*int64)(unsafe.Pointer(in.BackoffDeadlineSeconds))
+	out.FailedPodsLimit = (*int32)(unsafe.Pointer(in.FailedPodsLimit))
 	out.Selector = (*meta_v1.LabelSelector)(unsafe.Pointer(in.Selector))
 	out.ManualSelector = (*bool)(unsafe.Pointer(in.ManualSelector))
 	if err := api_v1.Convert_api_PodTemplateSpec_To_v1_PodTemplateSpec(&in.Template, &out.Template, s); err != nil {
@@ -188,6 +194,7 @@ func autoConvert_v1_JobStatus_To_batch_JobStatus(in *v1.JobStatus, out *batch.Jo
 	out.Active = in.Active
 	out.Succeeded = in.Succeeded
 	out.Failed = in.Failed
+	out.FailedAndDeleted = in.FailedAndDeleted
 	return nil
 }
 
@@ -203,6 +210,7 @@ func autoConvert_batch_JobStatus_To_v1_JobStatus(in *batch.JobStatus, out *v1.Jo
 	out.Active = in.Active
 	out.Succeeded = in.Succeeded
 	out.Failed = in.Failed
+	out.FailedAndDeleted = in.FailedAndDeleted
 	return nil
 }
 

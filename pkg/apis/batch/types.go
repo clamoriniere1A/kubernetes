@@ -173,6 +173,10 @@ type JobStatus struct {
 	// The number of pods which reached phase Failed.
 	// +optional
 	Failed int32
+
+	// The number of pods which reached phase Failed and deleted.
+	// +optional
+	FailedAndDeleted int32
 }
 
 type JobConditionType string

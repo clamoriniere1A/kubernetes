@@ -151,6 +151,10 @@ type JobStatus struct {
 	// The number of pods which reached phase Failed.
 	// +optional
 	Failed int32 `json:"failed,omitempty" protobuf:"varint,6,opt,name=failed"`
+
+	// The number of pods which reached phase Failed and also deleted.
+	// +optional
+	FailedAndDeleted int32 `json:"failedAndDeleted,omitempty" protobuf:"varint,7,opt,name=failedAndDeleted"`
 }
 
 type JobConditionType string

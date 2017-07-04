@@ -128,6 +128,7 @@ func ValidateJobStatus(status *batch.JobStatus, fldPath *field.Path) field.Error
 	allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(status.Active), fldPath.Child("active"))...)
 	allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(status.Succeeded), fldPath.Child("succeeded"))...)
 	allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(status.Failed), fldPath.Child("failed"))...)
+	allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(status.FailedAndDeleted), fldPath.Child("failedAndDeleted"))...)
 	return allErrs
 }
 

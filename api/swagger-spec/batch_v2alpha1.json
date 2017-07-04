@@ -2466,7 +2466,22 @@
      "activeDeadlineSeconds": {
       "type": "integer",
       "format": "int64",
-      "description": "Optional duration in seconds relative to the startTime that the job may be active before the system tries to terminate it; value must be positive integer"
+      "description": "Specifies the duration in seconds relative to the startTime that the job may be active before the system tries to terminate it; value must be positive integer"
+     },
+     "backoffLimit": {
+      "type": "integer",
+      "format": "int32",
+      "description": "Specifies the number of retries before marking this job failed."
+     },
+     "backoffDeadlineSeconds": {
+      "type": "integer",
+      "format": "int64",
+      "description": "Specifies the time (in seconds) specifying how long a job should be retried before marking it failed."
+     },
+     "failedPodsLimit": {
+      "type": "integer",
+      "format": "int32",
+      "description": "Optional number of failed pods to retain."
      },
      "selector": {
       "$ref": "v1.LabelSelector",
