@@ -419,7 +419,10 @@ func (jm *JobController) syncJob(key string) error {
 
 	activePods := controller.FilterActivePods(pods)
 	active := int32(len(activePods))
-	succeeded, failed := getStatus(pods)
+	succeeded, failedButNotDeleted := getStatus(pods)
+	failedAndDeleted := job.Status.FailedAndDeleted
+	// failed is the addition of active failed pods and the deleted failed pods
+	failed := failedButNotDeleted + failedAndDeleted
 	conditions := len(job.Status.Conditions)
 	if job.Status.StartTime == nil {
 		now := metav1.Now()
@@ -438,20 +441,8 @@ func (jm *JobController) syncJob(key string) error {
 		// https://github.com/kubernetes/kubernetes/issues/14602 which might give
 		// some sort of solution to above problem.
 		// kill remaining active pods
-		wait := sync.WaitGroup{}
-		errCh := make(chan error, int(active))
-		wait.Add(int(active))
-		for i := int32(0); i < active; i++ {
-			go func(ix int32) {
-				defer wait.Done()
-				if err := jm.podControl.DeletePod(job.Namespace, activePods[ix].Name, &job); err != nil {
-					defer utilruntime.HandleError(err)
-					glog.V(2).Infof("Failed to delete %v, job %q/%q deadline exceeded", activePods[ix].Name, job.Namespace, job.Name)
-					errCh <- err
-				}
-			}(i)
-		}
-		wait.Wait()
+		errCh := make(chan error, active)
+		jm.deleteJobPods(&job, activePods, errCh)
 
 		select {
 		case manageJobErr = <-errCh:
@@ -504,17 +495,72 @@ func (jm *JobController) syncJob(key string) error {
 		}
 	}
 
+	// Cleaning pod with failure status if needed
+	if job.Spec.FailedPodsLimit != nil && failed > *job.Spec.FailedPodsLimit {
+		howManyJobToKeep := *job.Spec.FailedPodsLimit - job.Status.FailedAndDeleted
+		failedPods := filterPods(activePods, v1.PodFailed)
+
+		podsToDelete := failedPods[howManyJobToKeep:]
+		nbPodsToDelete := len(podsToDelete)
+		for i := 0; i < nbPodsToDelete; i++ {
+			errCh := make(chan error, active)
+			jm.deleteJobPods(&job, podsToDelete, errCh)
+			select {
+			case manageJobErr = <-errCh:
+				if manageJobErr != nil {
+					break
+				}
+			default:
+			}
+		}
+	}
+
 	// no need to update the job if the status hasn't changed since last time
 	if job.Status.Active != active || job.Status.Succeeded != succeeded || job.Status.Failed != failed || len(job.Status.Conditions) != conditions {
+		// check if the number of failed pod don't exceed the job.Spec.FailedPodLimit; if yes: updated the job status to JobFailed
+		if job.Spec.BackoffLimit != nil && job.Status.Failed >= *job.Spec.BackoffLimit {
+			errCh := make(chan error, active)
+			jm.deleteJobPods(&job, activePods, errCh)
+
+			select {
+			case manageJobErr = <-errCh:
+				if manageJobErr != nil {
+					break
+				}
+			default:
+			}
+
+			active = 0
+			job.Status.Conditions = append(job.Status.Conditions, newCondition(batch.JobFailed, "TooManyFailedPods", "Too many failed pods, Job.Spec.FailedPodsLimits reached"))
+		}
+
 		job.Status.Active = active
 		job.Status.Succeeded = succeeded
 		job.Status.Failed = failed
+		job.Status.FailedAndDeleted = failedAndDeleted
 
 		if err := jm.updateHandler(&job); err != nil {
 			return err
 		}
 	}
 	return manageJobErr
+}
+
+func (jm *JobController) deleteJobPods(job *batch.Job, pods []*v1.Pod, errCh chan<- error) {
+	wait := sync.WaitGroup{}
+	nbPods := len(pods)
+	wait.Add(nbPods)
+	for i := int32(0); i < int32(nbPods); i++ {
+		go func(ix int32) {
+			defer wait.Done()
+			if err := jm.podControl.DeletePod(job.Namespace, pods[ix].Name, job); err != nil {
+				defer utilruntime.HandleError(err)
+				glog.V(2).Infof("Failed to delete %v, job %q/%q deadline exceeded", pods[ix].Name, job.Namespace, job.Name)
+				errCh <- err
+			}
+		}(i)
+	}
+	wait.Wait()
 }
 
 // pastActiveDeadline checks if job has ActiveDeadlineSeconds field set and if it is exceeded.
@@ -542,8 +588,8 @@ func newCondition(conditionType batch.JobConditionType, reason, message string) 
 
 // getStatus returns no of succeeded and failed pods running a job
 func getStatus(pods []*v1.Pod) (succeeded, failed int32) {
-	succeeded = int32(filterPods(pods, v1.PodSucceeded))
-	failed = int32(filterPods(pods, v1.PodFailed))
+	succeeded = counterFilterPods(pods, v1.PodSucceeded)
+	failed = counterFilterPods(pods, v1.PodFailed)
 	return
 }
 
@@ -657,15 +703,26 @@ func (jm *JobController) updateJobStatus(job *batch.Job) error {
 	return err
 }
 
-// filterPods returns pods based on their phase.
-func filterPods(pods []*v1.Pod, phase v1.PodPhase) int {
-	result := 0
+// counterFilterPods returns the number of pods based on their phase.
+func counterFilterPods(pods []*v1.Pod, phase v1.PodPhase) int32 {
+	var counter int32
 	for i := range pods {
 		if phase == pods[i].Status.Phase {
-			result++
+			counter++
 		}
 	}
-	return result
+	return counter
+}
+
+// filterPods returns pods based on their phase.
+func filterPods(pods []*v1.Pod, phase v1.PodPhase) []*v1.Pod {
+	filteredPods := []*v1.Pod{}
+	for i := range pods {
+		if phase == pods[i].Status.Phase {
+			filteredPods = append(filteredPods, pods[i])
+		}
+	}
+	return filteredPods
 }
 
 // byCreationTimestamp sorts a list by creation timestamp, using their names as a tie breaker.
