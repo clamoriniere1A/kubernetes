@@ -41,9 +41,10 @@ const (
 // effectively forever. fail starts a Job that will fail immediately. succeed starts a Job that will succeed
 // immediately. randomlySucceedOrFail starts a Job that will succeed or fail randomly. failOnce fails the Job the
 // first time it is run and succeeds subsequently. name is the Name of the Job. RestartPolicy indicates the restart
-// policy of the containers in which the Pod is running. Parallelism is the Job's parallelism, and completions is the
-// Job's required number of completions.
-func NewTestJob(behavior, name string, rPol v1.RestartPolicy, parallelism, completions int32) *batch.Job {
+// policy of the containers in which the Pod is running. Parallelism is the Job's parallelism, completions is the
+// Job's required number of completions, backoffLimit the number of retries before marking the job failed (-1 means
+// not set) and failedPodsLimit the number of failed pods to retain.
+func NewTestJob(behavior, name string, rPol v1.RestartPolicy, parallelism, completions, backoffLimit, failedPodsLimit int32) *batch.Job {
 	job := &batch.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
@@ -52,9 +53,10 @@ func NewTestJob(behavior, name string, rPol v1.RestartPolicy, parallelism, compl
 			Kind: "Job",
 		},
 		Spec: batch.JobSpec{
-			Parallelism:    &parallelism,
-			Completions:    &completions,
-			ManualSelector: newBool(false),
+			Parallelism:     &parallelism,
+			Completions:     &completions,
+			FailedPodsLimit: &failedPodsLimit,
+			ManualSelector:  newBool(false),
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{JobSelectorKey: name},
@@ -86,6 +88,12 @@ func NewTestJob(behavior, name string, rPol v1.RestartPolicy, parallelism, compl
 			},
 		},
 	}
+
+	// Set FailedPodLimit only if the value is a valid value
+	if backoffLimit >= 0 {
+		job.Spec.BackoffLimit = &backoffLimit
+	}
+
 	switch behavior {
 	case "notTerminate":
 		job.Spec.Template.Spec.Containers[0].Command = []string{"sleep", "1000000"}

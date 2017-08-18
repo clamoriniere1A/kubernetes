@@ -43,7 +43,7 @@ import (
 
 var alwaysReady = func() bool { return true }
 
-func newJob(parallelism, completions int32) *batch.Job {
+func newJob(parallelism, completions, failedPodsLimit, backoffLimit int32) *batch.Job {
 	j := &batch.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "foobar",
@@ -80,6 +80,20 @@ func newJob(parallelism, completions int32) *batch.Job {
 	} else {
 		j.Spec.Parallelism = nil
 	}
+
+	if failedPodsLimit >= 0 {
+		j.Spec.FailedPodsLimit = &failedPodsLimit
+	} else {
+		defaultValue := int32(1) // 1 is the default value
+		j.Spec.FailedPodsLimit = &defaultValue
+	}
+
+	if backoffLimit >= 0 {
+		j.Spec.BackoffLimit = &backoffLimit
+	} else {
+		j.Spec.BackoffLimit = nil
+	}
+
 	return j
 }
 
@@ -121,16 +135,19 @@ func newPodList(count int32, status v1.PodPhase, job *batch.Job) []v1.Pod {
 func TestControllerSyncJob(t *testing.T) {
 	testCases := map[string]struct {
 		// job setup
-		parallelism int32
-		completions int32
-		deleting    bool
+		parallelism     int32
+		completions     int32
+		deleting        bool
+		failedPodsLimit int32
+		backoffLimit    int32
 
 		// pod setup
-		podControllerError error
-		pendingPods        int32
-		activePods         int32
-		succeededPods      int32
-		failedPods         int32
+		podControllerError   error
+		pendingPods          int32
+		activePods           int32
+		succeededPods        int32
+		failedPods           int32
+		failedPodsAndDeleted int32
 
 		// expectations
 		expectedCreations int32
@@ -141,93 +158,93 @@ func TestControllerSyncJob(t *testing.T) {
 		expectedComplete  bool
 	}{
 		"job start": {
-			2, 5, false,
-			nil, 0, 0, 0, 0,
+			2, 5, false, 1, 1,
+			nil, 0, 0, 0, 0, 0,
 			2, 0, 2, 0, 0, false,
 		},
 		"WQ job start": {
-			2, -1, false,
-			nil, 0, 0, 0, 0,
+			2, -1, false, 1, 1,
+			nil, 0, 0, 0, 0, 0,
 			2, 0, 2, 0, 0, false,
 		},
 		"pending pods": {
-			2, 5, false,
-			nil, 2, 0, 0, 0,
+			2, 5, false, 1, 1,
+			nil, 2, 0, 0, 0, 0,
 			0, 0, 2, 0, 0, false,
 		},
 		"correct # of pods": {
-			2, 5, false,
-			nil, 0, 2, 0, 0,
+			2, 5, false, 1, 1,
+			nil, 0, 2, 0, 0, 0,
 			0, 0, 2, 0, 0, false,
 		},
 		"WQ job: correct # of pods": {
-			2, -1, false,
-			nil, 0, 2, 0, 0,
+			2, -1, false, 1, 1,
+			nil, 0, 2, 0, 0, 0,
 			0, 0, 2, 0, 0, false,
 		},
 		"too few active pods": {
-			2, 5, false,
-			nil, 0, 1, 1, 0,
+			2, 5, false, 1, 1,
+			nil, 0, 1, 1, 0, 0,
 			1, 0, 2, 1, 0, false,
 		},
 		"too few active pods with a dynamic job": {
-			2, -1, false,
-			nil, 0, 1, 0, 0,
+			2, -1, false, 1, 1,
+			nil, 0, 1, 0, 0, 0,
 			1, 0, 2, 0, 0, false,
 		},
 		"too few active pods, with controller error": {
-			2, 5, false,
-			fmt.Errorf("Fake error"), 0, 1, 1, 0,
+			2, 5, false, 1, 1,
+			fmt.Errorf("Fake error"), 0, 1, 1, 0, 0,
 			1, 0, 1, 1, 0, false,
 		},
 		"too many active pods": {
-			2, 5, false,
-			nil, 0, 3, 0, 0,
+			2, 5, false, 1, 1,
+			nil, 0, 3, 0, 0, 0,
 			0, 1, 2, 0, 0, false,
 		},
 		"too many active pods, with controller error": {
-			2, 5, false,
-			fmt.Errorf("Fake error"), 0, 3, 0, 0,
+			2, 5, false, 1, 1,
+			fmt.Errorf("Fake error"), 0, 3, 0, 0, 0,
 			0, 1, 3, 0, 0, false,
 		},
 		"failed pod": {
-			2, 5, false,
-			nil, 0, 1, 1, 1,
+			2, 5, false, 1, 1,
+			nil, 0, 1, 1, 1, 0,
 			1, 0, 2, 1, 1, false,
 		},
 		"job finish": {
-			2, 5, false,
-			nil, 0, 0, 5, 0,
+			2, 5, false, 1, 1,
+			nil, 0, 0, 5, 0, 0,
 			0, 0, 0, 5, 0, true,
 		},
 		"WQ job finishing": {
-			2, -1, false,
-			nil, 0, 1, 1, 0,
+			2, -1, false, 1, 1,
+			nil, 0, 1, 1, 0, 0,
 			0, 0, 1, 1, 0, false,
 		},
 		"WQ job all finished": {
-			2, -1, false,
-			nil, 0, 0, 2, 0,
+			2, -1, false, 1, 1,
+			nil, 0, 0, 2, 0, 0,
 			0, 0, 0, 2, 0, true,
 		},
 		"WQ job all finished despite one failure": {
-			2, -1, false,
-			nil, 0, 0, 1, 1,
+			2, -1, false, 1, 1,
+			nil, 0, 0, 1, 1, 0,
 			0, 0, 0, 1, 1, true,
 		},
 		"more active pods than completions": {
-			2, 5, false,
-			nil, 0, 10, 0, 0,
+			2, 5, false, 1, 1,
+			nil, 0, 10, 0, 0, 0,
 			0, 8, 2, 0, 0, false,
 		},
 		"status change": {
-			2, 5, false,
-			nil, 0, 2, 2, 0,
+			2, 5, false, 1, 1,
+			nil, 0, 2, 2, 0, 0,
 			0, 0, 2, 2, 0, false,
 		},
 		"deleting job": {
-			2, 5, true,
-			nil, 1, 1, 1, 0,
+			2, 5, true, 1, 1,
+			nil, 1, 1, 1, 0, 0,
 			0, 0, 2, 1, 0, false,
 		},
 	}
@@ -247,7 +264,7 @@ func TestControllerSyncJob(t *testing.T) {
 		}
 
 		// job & pods setup
-		job := newJob(tc.parallelism, tc.completions)
+		job := newJob(tc.parallelism, tc.completions, tc.failedPodsLimit, tc.backoffLimit)
 		if tc.deleting {
 			now := metav1.Now()
 			job.DeletionTimestamp = &now
@@ -337,6 +354,8 @@ func TestSyncJobPastDeadline(t *testing.T) {
 		completions           int32
 		activeDeadlineSeconds int64
 		startTime             int64
+		failedPodsLimit       int32
+		backoffLimit          int32
 
 		// pod setup
 		activePods    int32
@@ -350,17 +369,17 @@ func TestSyncJobPastDeadline(t *testing.T) {
 		expectedFailed    int32
 	}{
 		"activeDeadlineSeconds less than single pod execution": {
-			1, 1, 10, 15,
+			1, 1, 10, 15, -1, -1,
 			1, 0, 0,
 			1, 0, 0, 1,
 		},
 		"activeDeadlineSeconds bigger than single pod execution": {
-			1, 2, 10, 15,
+			1, 2, 10, 15, -1, -1,
 			1, 1, 0,
 			1, 0, 1, 1,
 		},
 		"activeDeadlineSeconds times-out before any pod starts": {
-			1, 1, 10, 10,
+			1, 1, 10, 10, -1, -1,
 			0, 0, 0,
 			0, 0, 0, 0,
 		},
@@ -381,7 +400,7 @@ func TestSyncJobPastDeadline(t *testing.T) {
 		}
 
 		// job & pods setup
-		job := newJob(tc.parallelism, tc.completions)
+		job := newJob(tc.parallelism, tc.completions, tc.failedPodsLimit, tc.backoffLimit)
 		job.Spec.ActiveDeadlineSeconds = &tc.activeDeadlineSeconds
 		start := metav1.Unix(metav1.Now().Time.Unix()-tc.startTime, 0)
 		job.Status.StartTime = &start
@@ -452,7 +471,7 @@ func TestSyncPastDeadlineJobFinished(t *testing.T) {
 		return nil
 	}
 
-	job := newJob(1, 1)
+	job := newJob(1, 1, -1, -1)
 	activeDeadlineSeconds := int64(10)
 	job.Spec.ActiveDeadlineSeconds = &activeDeadlineSeconds
 	start := metav1.Unix(metav1.Now().Time.Unix()-15, 0)
@@ -482,7 +501,7 @@ func TestSyncJobComplete(t *testing.T) {
 	manager.podStoreSynced = alwaysReady
 	manager.jobStoreSynced = alwaysReady
 
-	job := newJob(1, 1)
+	job := newJob(1, 1, -1, -1)
 	job.Status.Conditions = append(job.Status.Conditions, newCondition(batch.JobComplete, "", ""))
 	sharedInformerFactory.Batch().V1().Jobs().Informer().GetIndexer().Add(job)
 	err := manager.syncJob(getKey(job, t))
@@ -507,7 +526,7 @@ func TestSyncJobDeleted(t *testing.T) {
 	manager.podStoreSynced = alwaysReady
 	manager.jobStoreSynced = alwaysReady
 	manager.updateHandler = func(job *batch.Job) error { return nil }
-	job := newJob(2, 2)
+	job := newJob(2, 2, -1, -1)
 	err := manager.syncJob(getKey(job, t))
 	if err != nil {
 		t.Errorf("Unexpected error when syncing jobs %v", err)
@@ -532,7 +551,7 @@ func TestSyncJobUpdateRequeue(t *testing.T) {
 		manager.queue.AddRateLimited(getKey(job, t))
 		return updateError
 	}
-	job := newJob(2, 2)
+	job := newJob(2, 2, -1, -1)
 	sharedInformerFactory.Batch().V1().Jobs().Informer().GetIndexer().Add(job)
 	err := manager.syncJob(getKey(job, t))
 	if err == nil || err != updateError {
@@ -645,9 +664,9 @@ func TestGetPodsForJob(t *testing.T) {
 	jm.podStoreSynced = alwaysReady
 	jm.jobStoreSynced = alwaysReady
 
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
-	job2 := newJob(1, 1)
+	job2 := newJob(1, 1, -1, -1)
 	job2.Name = "job2"
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job1)
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job2)
@@ -686,7 +705,7 @@ func TestGetPodsForJob(t *testing.T) {
 }
 
 func TestGetPodsForJobAdopt(t *testing.T) {
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
 	clientset := fake.NewSimpleClientset(job1)
 	jm, informer := newJobControllerFromClient(clientset, controller.NoResyncPeriodFunc)
@@ -712,7 +731,7 @@ func TestGetPodsForJobAdopt(t *testing.T) {
 }
 
 func TestGetPodsForJobNoAdoptIfBeingDeleted(t *testing.T) {
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
 	job1.DeletionTimestamp = &metav1.Time{}
 	clientset := fake.NewSimpleClientset(job1)
@@ -742,7 +761,7 @@ func TestGetPodsForJobNoAdoptIfBeingDeleted(t *testing.T) {
 }
 
 func TestGetPodsForJobNoAdoptIfBeingDeletedRace(t *testing.T) {
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
 	// The up-to-date object says it's being deleted.
 	job1.DeletionTimestamp = &metav1.Time{}
@@ -781,7 +800,7 @@ func TestGetPodsForJobRelease(t *testing.T) {
 	jm.podStoreSynced = alwaysReady
 	jm.jobStoreSynced = alwaysReady
 
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job1)
 
@@ -810,9 +829,9 @@ func TestAddPod(t *testing.T) {
 	jm.podStoreSynced = alwaysReady
 	jm.jobStoreSynced = alwaysReady
 
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
-	job2 := newJob(1, 1)
+	job2 := newJob(1, 1, -1, -1)
 	job2.Name = "job2"
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job1)
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job2)
@@ -855,11 +874,11 @@ func TestAddPodOrphan(t *testing.T) {
 	jm.podStoreSynced = alwaysReady
 	jm.jobStoreSynced = alwaysReady
 
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
-	job2 := newJob(1, 1)
+	job2 := newJob(1, 1, -1, -1)
 	job2.Name = "job2"
-	job3 := newJob(1, 1)
+	job3 := newJob(1, 1, -1, -1)
 	job3.Name = "job3"
 	job3.Spec.Selector.MatchLabels = map[string]string{"other": "labels"}
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job1)
@@ -883,9 +902,9 @@ func TestUpdatePod(t *testing.T) {
 	jm.podStoreSynced = alwaysReady
 	jm.jobStoreSynced = alwaysReady
 
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
-	job2 := newJob(1, 1)
+	job2 := newJob(1, 1, -1, -1)
 	job2.Name = "job2"
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job1)
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job2)
@@ -932,9 +951,9 @@ func TestUpdatePodOrphanWithNewLabels(t *testing.T) {
 	jm.podStoreSynced = alwaysReady
 	jm.jobStoreSynced = alwaysReady
 
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
-	job2 := newJob(1, 1)
+	job2 := newJob(1, 1, -1, -1)
 	job2.Name = "job2"
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job1)
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job2)
@@ -959,9 +978,9 @@ func TestUpdatePodChangeControllerRef(t *testing.T) {
 	jm.podStoreSynced = alwaysReady
 	jm.jobStoreSynced = alwaysReady
 
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
-	job2 := newJob(1, 1)
+	job2 := newJob(1, 1, -1, -1)
 	job2.Name = "job2"
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job1)
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job2)
@@ -985,9 +1004,9 @@ func TestUpdatePodRelease(t *testing.T) {
 	jm.podStoreSynced = alwaysReady
 	jm.jobStoreSynced = alwaysReady
 
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
-	job2 := newJob(1, 1)
+	job2 := newJob(1, 1, -1, -1)
 	job2.Name = "job2"
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job1)
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job2)
@@ -1011,9 +1030,9 @@ func TestDeletePod(t *testing.T) {
 	jm.podStoreSynced = alwaysReady
 	jm.jobStoreSynced = alwaysReady
 
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
-	job2 := newJob(1, 1)
+	job2 := newJob(1, 1, -1, -1)
 	job2.Name = "job2"
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job1)
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job2)
@@ -1056,11 +1075,11 @@ func TestDeletePodOrphan(t *testing.T) {
 	jm.podStoreSynced = alwaysReady
 	jm.jobStoreSynced = alwaysReady
 
-	job1 := newJob(1, 1)
+	job1 := newJob(1, 1, -1, -1)
 	job1.Name = "job1"
-	job2 := newJob(1, 1)
+	job2 := newJob(1, 1, -1, -1)
 	job2.Name = "job2"
-	job3 := newJob(1, 1)
+	job3 := newJob(1, 1, -1, -1)
 	job3.Name = "job3"
 	job3.Spec.Selector.MatchLabels = map[string]string{"other": "labels"}
 	informer.Batch().V1().Jobs().Informer().GetIndexer().Add(job1)
@@ -1099,7 +1118,7 @@ func TestSyncJobExpectations(t *testing.T) {
 	manager.jobStoreSynced = alwaysReady
 	manager.updateHandler = func(job *batch.Job) error { return nil }
 
-	job := newJob(2, 2)
+	job := newJob(2, 2, -1, -1)
 	sharedInformerFactory.Batch().V1().Jobs().Informer().GetIndexer().Add(job)
 	pods := newPodList(2, v1.PodPending, job)
 	podIndexer := sharedInformerFactory.Core().V1().Pods().Informer().GetIndexer()
@@ -1167,7 +1186,7 @@ func TestWatchJobs(t *testing.T) {
 }
 
 func TestWatchPods(t *testing.T) {
-	testJob := newJob(2, 2)
+	testJob := newJob(2, 2, -1, -1)
 	clientset := fake.NewSimpleClientset(testJob)
 	fakeWatch := watch.NewFake()
 	clientset.PrependWatchReactor("pods", core.DefaultWatchReactor(fakeWatch, nil))

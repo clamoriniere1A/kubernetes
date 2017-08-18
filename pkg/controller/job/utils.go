@@ -17,6 +17,8 @@ limitations under the License.
 package job
 
 import (
+	"sort"
+
 	batch "k8s.io/api/batch/v1"
 	"k8s.io/api/core/v1"
 )
@@ -28,4 +30,40 @@ func IsJobFinished(j *batch.Job) bool {
 		}
 	}
 	return false
+}
+
+// podByFailedTime used to sort pod by LastTransitionTime Conditions
+type podByFailedTime []*v1.Pod
+
+func (p podByFailedTime) Len() int {
+	return len(p)
+}
+func (p podByFailedTime) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
+}
+func (p podByFailedTime) Less(i, j int) bool {
+	ci := getTrueCondition(p[i])
+	cj := getTrueCondition(p[j])
+
+	if cj != nil && ci != nil {
+		if cj.LastProbeTime.After(ci.LastProbeTime.Time) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Sort used to sort the element of the podByFailedTime slice
+func (p *podByFailedTime) Sort() {
+	sort.Sort(p)
+}
+
+func getTrueCondition(pod *v1.Pod) *v1.PodCondition {
+	for _, c := range pod.Status.Conditions {
+		if c.Status == v1.ConditionTrue {
+			return &c
+		}
+	}
+	return nil
 }

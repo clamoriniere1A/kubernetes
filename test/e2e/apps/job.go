@@ -35,11 +35,13 @@ var _ = SIGDescribe("Job", func() {
 	f := framework.NewDefaultFramework("job")
 	parallelism := int32(2)
 	completions := int32(4)
+	backoffLimit := int32(-1)
+	limitPodsFailed := int32(1)
 
 	// Simplest case: all pods succeed promptly
 	It("should run a job to completion when tasks succeed", func() {
 		By("Creating a job")
-		job := framework.NewTestJob("succeed", "all-succeed", v1.RestartPolicyNever, parallelism, completions)
+		job := framework.NewTestJob("succeed", "all-succeed", v1.RestartPolicyNever, parallelism, completions, backoffLimit, limitPodsFailed)
 		job, err := framework.CreateJob(f.ClientSet, f.Namespace.Name, job)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -58,7 +60,7 @@ var _ = SIGDescribe("Job", func() {
 		// up to 5 minutes between restarts, making test timeouts
 		// due to successive failures too likely with a reasonable
 		// test timeout.
-		job := framework.NewTestJob("failOnce", "fail-once-local", v1.RestartPolicyOnFailure, parallelism, completions)
+		job := framework.NewTestJob("failOnce", "fail-once-local", v1.RestartPolicyOnFailure, parallelism, completions, backoffLimit, limitPodsFailed)
 		job, err := framework.CreateJob(f.ClientSet, f.Namespace.Name, job)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -76,7 +78,7 @@ var _ = SIGDescribe("Job", func() {
 		// Worst case analysis: 15 failures, each taking 1 minute to
 		// run due to some slowness, 1 in 2^15 chance of happening,
 		// causing test flake.  Should be very rare.
-		job := framework.NewTestJob("randomlySucceedOrFail", "rand-non-local", v1.RestartPolicyNever, parallelism, completions)
+		job := framework.NewTestJob("randomlySucceedOrFail", "rand-non-local", v1.RestartPolicyNever, parallelism, completions, backoffLimit, limitPodsFailed)
 		job, err := framework.CreateJob(f.ClientSet, f.Namespace.Name, job)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -87,7 +89,7 @@ var _ = SIGDescribe("Job", func() {
 
 	It("should delete a job", func() {
 		By("Creating a job")
-		job := framework.NewTestJob("notTerminate", "foo", v1.RestartPolicyNever, parallelism, completions)
+		job := framework.NewTestJob("notTerminate", "foo", v1.RestartPolicyNever, parallelism, completions, backoffLimit, limitPodsFailed)
 		job, err := framework.CreateJob(f.ClientSet, f.Namespace.Name, job)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -110,7 +112,7 @@ var _ = SIGDescribe("Job", func() {
 
 	It("should adopt matching orphans and release non-matching pods", func() {
 		By("Creating a job")
-		job := framework.NewTestJob("notTerminate", "adopt-release", v1.RestartPolicyNever, parallelism, completions)
+		job := framework.NewTestJob("notTerminate", "adopt-release", v1.RestartPolicyNever, parallelism, completions, backoffLimit, limitPodsFailed)
 		// Replace job with the one returned from Create() so it has the UID.
 		// Save Kind since it won't be populated in the returned job.
 		kind := job.Kind
